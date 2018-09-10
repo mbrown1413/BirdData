@@ -1,5 +1,6 @@
 
 import os
+import multiprocessing
 from time import time
 from collections import namedtuple
 from functools import partial
@@ -17,7 +18,6 @@ if DHT_ENABLE:
     import Adafruit_DHT
     DHT_SENSOR = Adafruit_DHT.DHT22  # DHT sensor model
     DHT_PIN = '3'  # Raspberry pi I/O port pin of DHT sensor
-    DHT_READ_INTERVAL = 30  # Seconds between reads of DHT sensor
 
 def get_out_filename():
     dirname = 'data'
@@ -27,6 +27,32 @@ def get_out_filename():
         filename = os.path.join(dirname, 'bird_{}.dat'.format(i))
         if not os.path.exists(filename):
             return filename
+
+class AsyncDhtReader:
+
+    def __init__(self, sensor_type, pin):
+        self.sensor_type = sensor_type
+        self.pin = pin
+
+        self.shared = multiprocessing.Manager().Namespace()
+        self.shared.humid = None
+        self.shared.temp = None
+
+        self.process = multiprocessing.Process(target=self._process)
+        self.process.start()
+
+    def _process(self):
+        while True:
+            self.shared.humid, self.shared.temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
+
+    def read(self):
+        return self.shared.humid, self.shared.temp
+
+    def close(self):
+        if getattr(self, 'process', None):
+            self.process.terminate()
+
+    __del__ = close
 
 Param = namedtuple('Param', 'name default max')
 class TrackbarAdjustable:
@@ -111,14 +137,24 @@ def main():
         debug_window='debug' if debug else None,
     )
 
+    if DHT_ENABLE:
+        dht_reader = AsyncDhtReader(DHT_SENSOR, DHT_PIN)
+    out_file = open(get_out_filename(), 'w')
+    try:
+        run(video, debug, out_file, hat_finder, dht_reader)
+    finally:
+        out_file.close()
+        dht_reader.close()
+        video.release()
+
+def run(video, debug, out_file, hat_finder, dht_reader):
+
     # Setup data file
     start_time = time()
-    out_file = open(get_out_filename(), 'w')
     out_file.write('# Start Time: {}\n'.format(start_time))
     out_file.write('# Time,Temperature,Humidity,Hat X,Hat Y\n')
 
     temp = humid = None
-    last_dht_read = float('-inf')
     while True:
         ret, frame = video.read()
         if not ret:
@@ -134,10 +170,8 @@ def main():
             x, y = tuple(map(int, map(round, centroid)))
 
         # Read temperature and humidity
-        #TODO: Async DHT read needed, since it may take a while
-        if DHT_ENABLE and t + DHT_READ_INTERVAL >= last_dht_read:
-            last_dht_read = t
-            humid, temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
+        if dht_reader:
+            humid, temp = dht_reader.read()
 
         # Write data file
         t_relative = t - start_time
