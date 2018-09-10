@@ -8,14 +8,16 @@ from itertools import count
 import cv2
 import numpy
 
-import Adafruit_DHT
+VIDEO_SOURCE = 1  # Index of v4l camera
 
+# Settings for DHT temp/humidity sensor
 # See AdafruitDHT library for details on sensor and pin settings.
-DHT_SENSOR = Adafruit_DHT.DHT22  # DHT sensor model
-DHT_PIN = '3'  # Raspberry pi I/O port pin of DHT sensor
-DHT_READ_INTERVAL = 30  # Seconds between reads of DHT sensor
-
-VIDEO_SOURCE = 0  # Index of v4l camera
+DHT_ENABLE = False
+if DHT_ENABLE:
+    import Adafruit_DHT
+    DHT_SENSOR = Adafruit_DHT.DHT22  # DHT sensor model
+    DHT_PIN = '3'  # Raspberry pi I/O port pin of DHT sensor
+    DHT_READ_INTERVAL = 30  # Seconds between reads of DHT sensor
 
 def get_out_filename():
     dirname = 'data'
@@ -112,6 +114,7 @@ def main():
     out_file.write('# Start Time: {}'.format(start_time))
     out_file.write('# Time,Temperature,Humidity,Hat X,Hat Y')
 
+    temp = humid = None
     last_dht_read = float('-inf')
     while True:
         ret, frame = video.read()
@@ -125,7 +128,7 @@ def main():
         x, y = tuple(map(int, map(round, centroid)))
 
         # Read temperature and humidity
-        if t + DHT_READ_INTERVAL >= last_dht_read:
+        if DHT_ENABLE and t + DHT_READ_INTERVAL >= last_dht_read:
             last_dht_read = t
             humid, temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
 
