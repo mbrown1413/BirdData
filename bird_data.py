@@ -84,6 +84,8 @@ class HatFinder(TrackbarAdjustable):
 
         # Find centroid by largest connected component
         n_components, output, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        if n_components <= 1:
+            return None, mask
         best_idx = None
         for i in range(1, n_components): # Ignore background label 0
             area = stats[i][cv2.CC_STAT_AREA]
@@ -125,7 +127,10 @@ def main():
 
         # Find bird hat
         centroid, mask = hat_finder.find(frame)
-        x, y = tuple(map(int, map(round, centroid)))
+        if centroid is None:
+            x, y = None, None
+        else:
+            x, y = tuple(map(int, map(round, centroid)))
 
         # Read temperature and humidity
         if DHT_ENABLE and t + DHT_READ_INTERVAL >= last_dht_read:
@@ -147,7 +152,8 @@ def main():
             else:
                 print('Temp=? Humid=?'.format(temp, humid))
 
-            cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+            if x and y:
+                cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
             cv2.imshow('debug', mask)
             cv2.imshow('frame', frame)
 
