@@ -1,7 +1,7 @@
 
 import os
 import multiprocessing
-from time import time
+from time import time, sleep
 from collections import namedtuple
 from functools import partial
 from itertools import count
@@ -24,15 +24,16 @@ def get_out_filename():
     if not os.path.isdir(dirname):
         os.makedirs(dirname)
     for i in count():
-        filename = os.path.join(dirname, 'bird_{}.dat'.format(i))
+        filename = os.path.join(dirname, 'bird_{}.csv'.format(i))
         if not os.path.exists(filename):
             return filename
 
 class AsyncDhtReader:
 
-    def __init__(self, sensor_type, pin):
+    def __init__(self, sensor_type, pin, delay=0):
         self.sensor_type = sensor_type
         self.pin = pin
+        self.delay = delay
 
         self.shared = multiprocessing.Manager().Namespace()
         self.shared.humid = None
@@ -43,7 +44,11 @@ class AsyncDhtReader:
 
     def _process(self):
         while True:
-            self.shared.humid, self.shared.temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
+            humid, temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
+            if None not in (temp, humid):
+                self.shared.humid, self.shared.temp = humid, temp
+                if self.delay:
+                    sleep(self.delay)
 
     def read(self):
         return self.shared.humid, self.shared.temp
@@ -126,7 +131,7 @@ def main():
     # Camera setup
     video = cv2.VideoCapture(VIDEO_SOURCE)
     if not video.isOpened():
-        raise RuntimeError('Could not open source "{}"'.format(VIDEO_SOURCE))
+        raise RuntimeError('Could not open video source "{}"'.format(VIDEO_SOURCE))
     if debug:
         cv2.namedWindow('frame')
     hat_finder = HatFinder(
@@ -138,7 +143,7 @@ def main():
     )
 
     if DHT_ENABLE:
-        dht_reader = AsyncDhtReader(DHT_SENSOR, DHT_PIN)
+        dht_reader = AsyncDhtReader(DHT_SENSOR, DHT_PIN, 60)
     out_file = open(get_out_filename(), 'w')
     try:
         run(video, debug, out_file, hat_finder, dht_reader)
@@ -152,9 +157,10 @@ def run(video, debug, out_file, hat_finder, dht_reader):
     # Setup data file
     start_time = time()
     out_file.write('# Start Time: {}\n'.format(start_time))
-    out_file.write('# Time,Temperature,Humidity,Hat X,Hat Y\n')
+    out_file.write('# time,x,y,temperature,humidity\n')
 
     temp = humid = None
+    prev_values = None
     while True:
         ret, frame = video.read()
         if not ret:
@@ -173,14 +179,26 @@ def run(video, debug, out_file, hat_finder, dht_reader):
         if dht_reader:
             humid, temp = dht_reader.read()
 
-        # Write data file
-        t_relative = t - start_time
-        temp_str = '{0:0.1f}'.format(temp) if temp else ''
-        humid_str = '{0:0.1f}'.format(humid) if humid else ''
-        data_line = '{t_relative},{temp_str},{humid_str},{x},{y}\n'.format(**locals())
-        #TODO: Change fields to blank if same as last time
-        print(data_line, end='')
-        out_file.write(data_line)
+        # Format data values
+        relative_time = t - start_time
+        values = [
+            '{0:0.1f}'.format(value) if value else ''
+            for value in [relative_time, x, y, temp, humid]
+        ]
+        values = [v[:-2] if v.endswith('.0') else v for v in values]
+
+        # Set values to blank if they haven't changed
+        tmp_values = list(values)
+        if prev_values:
+            for i in range(len(values)):
+                if values[i] == prev_values[i]:
+                    values[i] = ''
+        prev_values = tmp_values
+
+        # Write data
+        data_line = ','.join(values).rstrip(',')
+        print(data_line)
+        out_file.write(data_line+'\n')
         out_file.flush()
 
         if debug:
