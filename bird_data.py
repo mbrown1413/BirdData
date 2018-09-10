@@ -8,7 +8,7 @@ from itertools import count
 import cv2
 import numpy
 
-VIDEO_SOURCE = 1  # Index of v4l camera
+VIDEO_SOURCE = 0  # Index of v4l camera
 
 # Settings for DHT temp/humidity sensor
 # See AdafruitDHT library for details on sensor and pin settings.
@@ -101,7 +101,8 @@ def main():
     video = cv2.VideoCapture(VIDEO_SOURCE)
     if not video.isOpened():
         raise RuntimeError('Could not open source "{}"'.format(VIDEO_SOURCE))
-    cv2.namedWindow('frame')
+    if debug:
+        cv2.namedWindow('frame')
     hat_finder = HatFinder(
         # Adjustable color parameters
         h_min=55, h_max=180,
@@ -113,8 +114,8 @@ def main():
     # Setup data file
     start_time = time()
     out_file = open(get_out_filename(), 'w')
-    out_file.write('# Start Time: {}'.format(start_time))
-    out_file.write('# Time,Temperature,Humidity,Hat X,Hat Y')
+    out_file.write('# Start Time: {}\n'.format(start_time))
+    out_file.write('# Time,Temperature,Humidity,Hat X,Hat Y\n')
 
     temp = humid = None
     last_dht_read = float('-inf')
@@ -133,16 +134,19 @@ def main():
             x, y = tuple(map(int, map(round, centroid)))
 
         # Read temperature and humidity
+        #TODO: Async DHT read needed, since it may take a while
         if DHT_ENABLE and t + DHT_READ_INTERVAL >= last_dht_read:
             last_dht_read = t
             humid, temp = Adafruit_DHT.read_retry(DHT_SENSOR, DHT_PIN)
 
         # Write data file
-        temp_str = temp or ''
-        humid_str = humid or ''
-        out_file.write(
-            '{t},{temp_str},{humid_str},{x},{y}'.format(**locals())
-        )
+        t_relative = t - start_time
+        temp_str = '{0:0.1f}'.format(temp) if temp else ''
+        humid_str = '{0:0.1f}'.format(humid) if humid else ''
+        data_line = '{t_relative},{temp_str},{humid_str},{x},{y}\n'.format(**locals())
+        #TODO: Change fields to blank if same as last time
+        print(data_line, end='')
+        out_file.write(data_line)
         out_file.flush()
 
         if debug:
